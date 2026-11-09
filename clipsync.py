@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-clipsync - deel je klembord tussen computers op je lokale netwerk.
+clipsync - share your clipboard between computers on your local network.
 
-Ondersteunt tekst, afbeeldingen en bestanden/mappen.
+Supports text, images and files/folders.
 
-- Alleen Python standaardbibliotheek, werkt op Windows en Linux.
-- Optioneel tray-icoon via pystray (zonder pystray draait het gewoon zonder icoon).
-- Apparaten vinden elkaar automatisch via UDP-broadcast.
-- Alles wat over het netwerk gaat is versleuteld en geauthenticeerd met een
-  gedeeld wachtwoord (scrypt -> SHAKE256-stroomcijfer + HMAC-SHA256).
+- Python standard library only, works on Windows and Linux.
+- Optional tray icon via pystray (without pystray it simply runs without an icon).
+- Devices find each other automatically via UDP broadcast.
+- Everything sent over the network is encrypted and authenticated with a
+  shared password (scrypt -> SHAKE256 stream cipher + HMAC-SHA256).
 
-Gebruik:
-    python clipsync.py              # draaien (vraagt de eerste keer om een wachtwoord)
-    python clipsync.py --setup      # wachtwoord (opnieuw) instellen
-    python clipsync.py --install    # automatisch starten bij inloggen
-    python clipsync.py --uninstall  # autostart weer verwijderen
+Usage:
+    python clipsync.py              # run (asks for a password the first time)
+    python clipsync.py --setup      # set (or change) the password
+    python clipsync.py --install    # start automatically at login
+    python clipsync.py --uninstall  # remove autostart again
 """
 
 import argparse
@@ -37,24 +37,24 @@ import urllib.parse
 import uuid
 import zlib
 
-DEFAULT_PORT = 45873           # standaardpoort; aan te passen met "port" in config.json
-PORT = int(os.environ.get("CLIPSYNC_PORT", DEFAULT_PORT))  # UDP (ontdekken) en TCP (klembord)
-BEACON_INTERVAL = 3            # seconden tussen "ik ben er"-berichten
-PEER_TIMEOUT = 15              # peer vergeten als hij zo lang niets heeft laten horen
-POLL_INTERVAL = 0.5            # hoe vaak het lokale klembord gecontroleerd wordt
-MAX_AGE = 120                  # berichten ouder dan dit (seconden) worden geweigerd
-MAX_INLINE = 50 * 1024 * 1024  # max grootte tekst/afbeelding
-DEFAULT_MAX_FILES_MB = 500     # max totale grootte van gekopieerde bestanden
-KEEP_FILES_HOURS = 24          # ontvangen bestanden worden daarna opgeruimd
-HISTORY_SIZE = 5               # aantal recente klembord-items in het tray-menu
-CHUNK = 1024 * 1024            # grootte van versleutelde blokken
+DEFAULT_PORT = 45873           # default port; change it with "port" in config.json
+PORT = int(os.environ.get("CLIPSYNC_PORT", DEFAULT_PORT))  # UDP (discovery) and TCP (clipboard)
+BEACON_INTERVAL = 3            # seconds between "I am here" messages
+PEER_TIMEOUT = 15              # forget a peer after this long without hearing from it
+POLL_INTERVAL = 0.5            # how often the local clipboard is checked
+MAX_AGE = 120                  # messages older than this (seconds) are rejected
+MAX_INLINE = 50 * 1024 * 1024  # max size of text/image
+DEFAULT_MAX_FILES_MB = 500     # max total size of copied files
+KEEP_FILES_HOURS = 24          # received files are cleaned up after this
+HISTORY_SIZE = 5               # number of recent clipboard items in the tray menu
+CHUNK = 1024 * 1024            # size of encrypted blocks
 
 IS_WINDOWS = sys.platform == "win32"
 APP = "clipsync"
 
 
 # --------------------------------------------------------------------------- #
-# Paden & config
+# Paths & config
 # --------------------------------------------------------------------------- #
 
 def config_dir():
@@ -68,7 +68,7 @@ def config_dir():
 
 
 def files_dir():
-    """Waar ontvangen bestanden terechtkomen (wordt automatisch opgeruimd)."""
+    """Where received files are stored (cleaned up automatically)."""
     if IS_WINDOWS:
         base = os.environ.get("LOCALAPPDATA", config_dir())
     else:
@@ -98,28 +98,28 @@ def save_config(cfg):
 
 
 def setup():
-    print("Kies een wachtwoord. Gebruik op ALLE apparaten exact hetzelfde wachtwoord.")
+    print("Choose a password. Use exactly the same password on ALL devices.")
     while True:
-        pw = getpass.getpass("Wachtwoord: ")
+        pw = getpass.getpass("Password: ")
         if len(pw) < 8:
-            print("Minimaal 8 tekens graag.")
+            print("Please use at least 8 characters.")
             continue
-        if getpass.getpass("Nogmaals: ") != pw:
-            print("Komt niet overeen, probeer opnieuw.")
+        if getpass.getpass("Repeat: ") != pw:
+            print("Passwords do not match, try again.")
             continue
         break
     cfg = load_config() or {}
     cfg["password"] = pw
-    cfg.setdefault("peers", [])  # optioneel: vaste IP-adressen als broadcast niet werkt
+    cfg.setdefault("peers", [])  # optional: fixed IP addresses if broadcast doesn't work
     cfg.setdefault("max_files_mb", DEFAULT_MAX_FILES_MB)
-    cfg.setdefault("port", DEFAULT_PORT)  # moet op alle apparaten gelijk zijn
+    cfg.setdefault("port", DEFAULT_PORT)  # must be the same on all devices
     save_config(cfg)
-    print(f"Opgeslagen in {CONFIG_FILE}")
+    print(f"Saved to {CONFIG_FILE}")
     return cfg
 
 
 # --------------------------------------------------------------------------- #
-# Crypto (alleen stdlib)
+# Crypto (stdlib only)
 # --------------------------------------------------------------------------- #
 
 def xor(a: bytes, b: bytes) -> bytes:
@@ -140,7 +140,7 @@ class Crypto:
     def tag(self, nonce, idx, last, ct):
         return hmac.digest(self.mac_key, nonce + struct.pack(">QB", idx, last) + ct, "sha256")
 
-    # Losse berichten (UDP)
+    # Single messages (UDP)
     def seal(self, obj) -> bytes:
         nonce = os.urandom(16)
         ct = self.crypt(nonce, 0, json.dumps({**obj, "t": time.time()}).encode())
@@ -163,13 +163,13 @@ def recv_exact(sock, n):
     while len(buf) < n:
         chunk = sock.recv(min(n - len(buf), CHUNK))
         if not chunk:
-            raise ConnectionError("verbinding gesloten")
+            raise ConnectionError("connection closed")
         buf += chunk
     return bytes(buf)
 
 
 class FrameWriter:
-    """Versleutelde stroom: header-blok gevolgd door data-blokken van max CHUNK."""
+    """Encrypted stream: a header block followed by data blocks of at most CHUNK."""
 
     def __init__(self, sock, crypto):
         self.sock, self.crypto = sock, crypto
@@ -209,11 +209,11 @@ class FrameReader:
     def _next(self):
         length, last = struct.unpack(">IB", recv_exact(self.sock, 5))
         if length > 16 * CHUNK:
-            raise ValueError("blok te groot")
+            raise ValueError("block too large")
         ct = recv_exact(self.sock, length)
         tag = recv_exact(self.sock, 32)
         if not hmac.compare_digest(tag, self.crypto.tag(self.nonce, self.idx, last, ct)):
-            raise ValueError("ongeldige handtekening (ander wachtwoord?)")
+            raise ValueError("invalid signature (different password?)")
         pt = self.crypto.crypt(self.nonce, self.idx, ct)
         self.idx += 1
         return pt, last
@@ -221,10 +221,10 @@ class FrameReader:
     def header(self):
         pt, last = self._next()
         if last:
-            raise ValueError("leeg bericht")
+            raise ValueError("empty message")
         h = json.loads(pt)
         if abs(time.time() - h["t"]) > MAX_AGE:
-            raise ValueError("bericht te oud (lopen de klokken gelijk?)")
+            raise ValueError("message too old (are the clocks in sync?)")
         return h
 
     def _fill(self):
@@ -236,7 +236,7 @@ class FrameReader:
         while len(self.buf) < n and not self.done:
             self._fill()
         if len(self.buf) < n:
-            raise ValueError("bericht afgebroken")
+            raise ValueError("message truncated")
         out = bytes(self.buf[:n])
         del self.buf[:n]
         return out
@@ -245,21 +245,21 @@ class FrameReader:
         while not self.done:
             self._fill()
             if len(self.buf) > limit:
-                raise ValueError("bericht te groot")
+                raise ValueError("message too large")
         out, self.buf = bytes(self.buf), bytearray()
         return out
 
     def finish(self):
         if self.read_all(0):
-            raise ValueError("onverwachte extra data")
+            raise ValueError("unexpected extra data")
 
 
 # --------------------------------------------------------------------------- #
-# Klembord-inhoud
+# Clipboard content
 # --------------------------------------------------------------------------- #
 
 class Clip:
-    """kind: 'text' (str), 'image' (PNG-bytes) of 'files' (lijst met paden)."""
+    """kind: 'text' (str), 'image' (PNG bytes) or 'files' (list of paths)."""
 
     def __init__(self, kind, data):
         self.kind, self.data = kind, data
@@ -279,30 +279,30 @@ class Clip:
         return ("files", tuple(items))
 
     def available(self):
-        """Bestanden kunnen inmiddels verwijderd zijn (bv. opgeruimde cache)."""
+        """Files may have been deleted in the meantime (e.g. cleaned-up cache)."""
         return self.kind != "files" or all(os.path.exists(p) for p in self.data)
 
     def label(self, width=45):
-        """Korte omschrijving voor in een menu."""
+        """Short description for a menu."""
         if self.kind == "text":
-            t = " ".join(self.data.split()) or "(lege tekst)"
+            t = " ".join(self.data.split()) or "(empty text)"
             return t if len(t) <= width else t[:width - 1] + "…"
         if self.kind == "image":
             if self.data[:8] == b"\x89PNG\r\n\x1a\n" and len(self.data) >= 24:
                 w, h = struct.unpack(">II", self.data[16:24])
-                return f"Afbeelding {w}×{h}"
-            return "Afbeelding"
+                return f"Image {w}×{h}"
+            return "Image"
         name = os.path.basename(os.path.normpath(self.data[0])) or self.data[0]
-        kind = "Map" if os.path.isdir(self.data[0]) else "Bestand"
+        kind = "Folder" if os.path.isdir(self.data[0]) else "File"
         more = f" (+{len(self.data) - 1})" if len(self.data) > 1 else ""
         return f"{kind}: {name}{more}"
 
     def describe(self):
         if self.kind == "text":
-            return f"tekst, {len(self.data)} tekens"
+            return f"text, {len(self.data)} characters"
         if self.kind == "image":
-            return f"afbeelding, {max(1, len(self.data) // 1024)} KB"
-        return f"{len(self.data)} bestand(en)/map(pen)"
+            return f"image, {max(1, len(self.data) // 1024)} KB"
+        return f"{len(self.data)} file(s)/folder(s)"
 
 
 def make_png(width, height, color_type, raw):
@@ -316,7 +316,7 @@ def make_png(width, height, color_type, raw):
 
 
 def dib_to_png(dib):
-    """Zet een Windows CF_DIB (24/32 bit) om naar PNG."""
+    """Convert a Windows CF_DIB (24/32 bit) to PNG."""
     size, w, h, _planes, bpp, comp, _img, _x, _y, clr_used, _ = struct.unpack_from("<IiiHHIIiiII", dib)
     if bpp not in (24, 32) or comp not in (0, 3) or w <= 0 or h == 0:
         return None
@@ -331,7 +331,7 @@ def dib_to_png(dib):
         rows.reverse()
     raw = bytearray()
     if bpp == 32:
-        # Veel programma's laten het alfakanaal op 0 staan: dan is het ondoorzichtig.
+        # Many programs leave the alpha channel at 0: treat that as opaque.
         alpha_used = any(r[3:w * 4:4].count(0) != w for r in rows)
         for r in rows:
             r = r[:w * 4]
@@ -350,7 +350,7 @@ def dib_to_png(dib):
 
 
 # --------------------------------------------------------------------------- #
-# Klembord: Linux
+# Clipboard: Linux
 # --------------------------------------------------------------------------- #
 
 class LinuxClipboard:
@@ -358,17 +358,17 @@ class LinuxClipboard:
     FILE_TARGETS = ("x-special/gnome-copied-files", "text/uri-list")
 
     def __init__(self):
-        # Onder GNOME/KDE-Wayland werkt xclip via XWayland prima en zonder
-        # knipperende vensters; wl-clipboard is de terugval voor pure Wayland.
+        # On GNOME/KDE Wayland, xclip works fine via XWayland without
+        # flickering windows; wl-clipboard is the fallback for pure Wayland.
         if os.environ.get("DISPLAY") and shutil.which("xclip"):
             self.tool = "xclip"
         elif os.environ.get("WAYLAND_DISPLAY") and shutil.which("wl-paste"):
             self.tool = "wl"
         else:
-            raise SystemExit("Geen klembord-tool gevonden. Installeer xclip "
-                             "(sudo apt install xclip) of wl-clipboard.")
+            raise SystemExit("No clipboard tool found. Install xclip "
+                             "(sudo apt install xclip) or wl-clipboard.")
         desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
-        # Nautilus en verwanten plakken alleen bestanden uit dit formaat
+        # Nautilus and friends only paste files from this format
         self.gnome_files = any(d in desktop for d in
                                ("gnome", "unity", "cinnamon", "mate", "budgie", "pantheon", "xfce"))
 
@@ -386,7 +386,7 @@ class LinuxClipboard:
         return r.stdout if r.returncode == 0 else None
 
     def changed(self):
-        return True  # X11 heeft geen goedkope wijzigingsteller; read() + sig() vergelijkt
+        return True  # X11 has no cheap change counter; read() + sig() compares
 
     def read(self):
         out = self._run_get("TARGETS")
@@ -436,15 +436,15 @@ class LinuxClipboard:
             cmd = ["xclip", "-selection", "clipboard", "-i", "-t", target]
         else:
             cmd = ["wl-copy", "--type", target]
-        # xclip/wl-copy blijven op de achtergrond draaien als eigenaar van het
-        # klembord, dus niet wachten op stdout.
+        # xclip/wl-copy keep running in the background as clipboard owner,
+        # so don't wait for stdout.
         p = subprocess.Popen(cmd, stdin=subprocess.PIPE,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         p.communicate(data, timeout=10)
 
 
 # --------------------------------------------------------------------------- #
-# Klembord: Windows
+# Clipboard: Windows
 # --------------------------------------------------------------------------- #
 
 class WindowsClipboard:
@@ -486,7 +486,7 @@ class WindowsClipboard:
         self.gdip = None
 
     def _open(self):
-        for _ in range(20):  # een ander programma kan het klembord even vasthouden
+        for _ in range(20):  # another program may briefly hold the clipboard
             if self.u32.OpenClipboard(None):
                 return True
             time.sleep(0.05)
@@ -514,7 +514,7 @@ class WindowsClipboard:
     def read(self):
         avail = self.u32.IsClipboardFormatAvailable
         if not self._open():
-            self.seq = None  # volgende keer opnieuw proberen
+            self.seq = None  # try again next time
             return None
         try:
             if avail(self.CF_HDROP):
@@ -536,7 +536,7 @@ class WindowsClipboard:
             if avail(self.cf_png):
                 data = self._get_bytes(self.cf_png)
                 if data:
-                    end = data.rfind(b"IEND")  # GlobalSize kan naar boven afronden
+                    end = data.rfind(b"IEND")  # GlobalSize may round up
                     return Clip("image", data[:end + 8] if end > 0 else data)
             if avail(self.CF_DIB):
                 data = self._get_bytes(self.CF_DIB)
@@ -555,15 +555,15 @@ class WindowsClipboard:
             try:
                 formats.append((self.CF_DIB, self._png_to_dib(clip.data)))
             except Exception as e:
-                logging.warning("PNG naar DIB omzetten mislukt (alleen PNG gezet): %s", e)
+                logging.warning("Converting PNG to DIB failed (only PNG set): %s", e)
         else:
-            # DROPFILES-struct + dubbel-null-afgesloten lijst met paden
+            # DROPFILES struct + double-null-terminated list of paths
             files = "".join(p + "\x00" for p in clip.data) + "\x00"
             drop = struct.pack("<IiiII", 20, 0, 0, 0, 1) + files.encode("utf-16-le")
             formats = [(self.CF_HDROP, drop), (self.cf_effect, struct.pack("<I", 1))]
 
         if not self._open():
-            raise OSError("Kan klembord niet openen")
+            raise OSError("Cannot open clipboard")
         try:
             self.u32.EmptyClipboard()
             for fmt, data in formats:
@@ -577,7 +577,7 @@ class WindowsClipboard:
             self.u32.CloseClipboard()
 
     def _png_to_dib(self, png):
-        """Decodeer PNG met GDI+ (ingebouwd in Windows) naar een 32-bit CF_DIB."""
+        """Decode PNG with GDI+ (built into Windows) into a 32-bit CF_DIB."""
         ct, wt = self.ct, self.wt
         g = ct.WinDLL("gdiplus")
         if self.gdip is None:
@@ -587,7 +587,7 @@ class WindowsClipboard:
             token = ct.c_size_t()
             g.GdiplusStartup.argtypes = [ct.POINTER(ct.c_size_t), ct.POINTER(StartupInput), ct.c_void_p]
             if g.GdiplusStartup(ct.byref(token), ct.byref(StartupInput(1, None, False, False)), None):
-                raise OSError("GdiplusStartup mislukt")
+                raise OSError("GdiplusStartup failed")
             self.gdip = token
 
         class Rect(ct.Structure):
@@ -617,43 +617,43 @@ class WindowsClipboard:
 
         stream = shl.SHCreateMemStream(png, len(png))
         if not stream:
-            raise OSError("SHCreateMemStream mislukt")
+            raise OSError("SHCreateMemStream failed")
         src, bmp = ct.c_void_p(), ct.c_void_p()
         try:
             st = g.GdipCreateBitmapFromStream(stream, ct.byref(src))
             if st:
-                raise OSError(f"GDI+ kan afbeelding niet lezen (status {st})")
+                raise OSError(f"GDI+ cannot read image (status {st})")
             w, h = ct.c_uint(), ct.c_uint()
             g.GdipGetImageWidth(src, ct.byref(w))
             g.GdipGetImageHeight(src, ct.byref(h))
             w, h = w.value, h.value
-            # CF_DIB-lezers (Paint e.d.) negeren het alfakanaal, waardoor
-            # transparante delen zwart worden. Daarom op wit tekenen.
+            # CF_DIB readers (Paint etc.) ignore the alpha channel, which turns
+            # transparent areas black. So draw onto a white background.
             st = g.GdipCreateBitmapFromScan0(w, h, 0, 0x26200A, None, ct.byref(bmp))
             if st:
-                raise OSError(f"GDI+ CreateBitmap mislukt (status {st})")
+                raise OSError(f"GDI+ CreateBitmap failed (status {st})")
             gr = ct.c_void_p()
             st = g.GdipGetImageGraphicsContext(bmp, ct.byref(gr))
             if st:
-                raise OSError(f"GDI+ Graphics mislukt (status {st})")
+                raise OSError(f"GDI+ Graphics failed (status {st})")
             try:
                 g.GdipGraphicsClear(gr, 0xFFFFFFFF)
                 st = g.GdipDrawImageRectI(gr, src, 0, 0, w, h)
             finally:
                 g.GdipDeleteGraphics(gr)
             if st:
-                raise OSError(f"GDI+ DrawImage mislukt (status {st})")
+                raise OSError(f"GDI+ DrawImage failed (status {st})")
             bd = BitmapData()
             st = g.GdipBitmapLockBits(bmp, ct.byref(Rect(0, 0, w, h)), 1, 0x26200A, ct.byref(bd))
             if st:
-                raise OSError(f"GDI+ LockBits mislukt (status {st})")
+                raise OSError(f"GDI+ LockBits failed (status {st})")
             try:
                 stride = bd.Stride
                 raw = ct.string_at(bd.Scan0, stride * h)
             finally:
                 g.GdipBitmapUnlockBits(bmp, ct.byref(bd))
             rows = [raw[y * stride:y * stride + w * 4] for y in range(h)]
-            pixels = b"".join(reversed(rows))  # DIB is van onder naar boven
+            pixels = b"".join(reversed(rows))  # DIB is stored bottom-up
             header = struct.pack("<IiiHHIIiiII", 40, w, h, 1, 32, 0, len(pixels), 2835, 2835, 0, 0)
             return header + pixels
         finally:
@@ -665,7 +665,7 @@ class WindowsClipboard:
 
 
 # --------------------------------------------------------------------------- #
-# Bestanden
+# Files
 # --------------------------------------------------------------------------- #
 
 WIN_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
@@ -683,12 +683,12 @@ def safe_part(name):
 def safe_join(base, rel):
     parts = [p for p in rel.split("/") if p not in ("", ".")]
     if not parts or ".." in parts:
-        raise ValueError(f"ongeldig pad: {rel!r}")
+        raise ValueError(f"invalid path: {rel!r}")
     return os.path.join(base, *(safe_part(p) for p in parts))
 
 
 def build_manifest(paths):
-    """Geeft (entries, bronpaden, roots, totale grootte) terug."""
+    """Returns (entries, source paths, roots, total size)."""
     entries, sources, roots, total = [], [], [], 0
 
     def add_file(rel, path):
@@ -700,7 +700,7 @@ def build_manifest(paths):
 
     for path in paths:
         path = os.path.normpath(path)
-        name = os.path.basename(path) or "bestand"
+        name = os.path.basename(path) or "file"
         roots.append(name)
         if os.path.isdir(path):
             parent = os.path.dirname(path)
@@ -731,7 +731,7 @@ def cleanup_old_files():
 
 
 # --------------------------------------------------------------------------- #
-# Netwerk & hoofdlogica
+# Network & main logic
 # --------------------------------------------------------------------------- #
 
 def parse_peer(s):
@@ -747,11 +747,11 @@ class ClipSync:
         self.node_id = uuid.uuid4().hex[:12]
         self.name = socket.gethostname()
         self.clipboard = clipboard or (WindowsClipboard() if IS_WINDOWS else LinuxClipboard())
-        self.peers = {}               # (ip, poort) -> (naam, laatst gezien)
+        self.peers = {}               # (ip, port) -> (name, last seen)
         self.peer_lock = threading.Lock()
         self.clip_lock = threading.RLock()
-        self.last_event = None        # tekst voor het tray-menu
-        self.history = []             # recente Clips, nieuwste eerst
+        self.last_event = None        # text for the tray menu
+        self.history = []             # recent Clips, newest first
         self.history_version = 0
         self.clipboard.changed()
         current = self._safe_read()
@@ -767,27 +767,27 @@ class ClipSync:
             self.history_version += 1
 
     def restore(self, clip):
-        """Zet een item uit de geschiedenis terug op het klembord.
-        De poll-loop ziet de wijziging en stuurt het ook naar de andere apparaten."""
+        """Put an item from the history back on the clipboard.
+        The poll loop notices the change and also sends it to the other devices."""
         try:
             with self.clip_lock:
                 self.clipboard.write(clip)
-            logging.info("Uit geschiedenis teruggezet: %s", clip.describe())
+            logging.info("Restored from history: %s", clip.describe())
         except Exception as e:
-            logging.warning("Terugzetten mislukt: %s", e)
+            logging.warning("Restore failed: %s", e)
 
     def _safe_read(self):
         try:
             return self.clipboard.read()
         except Exception as e:
-            logging.debug("Klembord lezen mislukt: %s", e)
+            logging.debug("Reading clipboard failed: %s", e)
             return None
 
-    # -- ontdekken ---------------------------------------------------------- #
+    # -- discovery ---------------------------------------------------------- #
 
     @staticmethod
     def _local_ips():
-        """IPv4-adressen van deze pc, één per /24 (geen loopback/link-local)."""
+        """IPv4 addresses of this PC, one per /24 (no loopback/link-local)."""
         try:
             infos = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
         except OSError:
@@ -804,8 +804,8 @@ class ClipSync:
     def beacon_loop(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        # Windows stuurt 255.255.255.255 maar via één adapter (soms die van
-        # WSL/Hyper-V/VPN). Daarom per lokaal adres een eigen socket.
+        # Windows sends 255.255.255.255 through only one adapter (sometimes the
+        # WSL/Hyper-V/VPN one). So use a separate socket per local address.
         per_ip = {}
         while True:
             msg = self.crypto.seal({"k": "hello", "s": self.node_id, "n": self.name, "p": PORT})
@@ -853,7 +853,7 @@ class ClipSync:
             key = (ip, int(msg.get("p", PORT)))
             with self.peer_lock:
                 if key not in self.peers:
-                    logging.info("Apparaat gevonden: %s (%s)", msg.get("n"), ip)
+                    logging.info("Device found: %s (%s)", msg.get("n"), ip)
                 self.peers[key] = (msg.get("n"), time.time())
 
     def active_peers(self):
@@ -861,7 +861,7 @@ class ClipSync:
         with self.peer_lock:
             for key, (name, seen) in list(self.peers.items()):
                 if now - seen > PEER_TIMEOUT:
-                    logging.info("Apparaat weg: %s (%s)", name, key[0])
+                    logging.info("Device gone: %s (%s)", name, key[0])
                     del self.peers[key]
             return list(self.peers)
 
@@ -877,7 +877,7 @@ class ClipSync:
     def _event(self, text):
         self.last_event = f"{time.strftime('%H:%M')}  {text}"
 
-    # -- ontvangen ---------------------------------------------------------- #
+    # -- receiving ---------------------------------------------------------- #
 
     def server_loop(self):
         while True:
@@ -900,17 +900,17 @@ class ClipSync:
                 elif kind == "files":
                     clip = self.receive_files(reader, h)
                 else:
-                    raise ValueError(f"onbekend type {kind!r}")
+                    raise ValueError(f"unknown type {kind!r}")
                 self.apply(clip)
-                logging.info("Ontvangen van %s: %s", addr[0], clip.describe())
-                self._event(f"Ontvangen van {self.peer_name(addr[0])}: {clip.describe()}")
+                logging.info("Received from %s: %s", addr[0], clip.describe())
+                self._event(f"Received from {self.peer_name(addr[0])}: {clip.describe()}")
             except Exception as e:
-                logging.warning("Ontvangen van %s mislukt: %s", addr[0], e)
+                logging.warning("Receiving from %s failed: %s", addr[0], e)
 
     def receive_files(self, reader, h):
         entries = h["files"]
         if sum(e.get("n", 0) for e in entries) > self.max_files:
-            raise ValueError("bestanden groter dan max_files_mb")
+            raise ValueError("files larger than max_files_mb")
         cleanup_old_files()
         dest = os.path.join(files_dir(), time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6])
         os.makedirs(dest)
@@ -936,13 +936,13 @@ class ClipSync:
     def apply(self, clip):
         with self.clip_lock:
             self.clipboard.write(clip)
-            # Teruglezen wat er nu echt op het klembord staat, zodat we het niet
-            # direct weer terugsturen.
+            # Read back what is actually on the clipboard now, so we don't
+            # immediately send it back.
             back = self._safe_read()
             self.last_sig = back.sig() if back else clip.sig()
             self.remember(back or clip)
 
-    # -- versturen ---------------------------------------------------------- #
+    # -- sending ---------------------------------------------------------- #
 
     def send(self, addr, clip, manifest):
         try:
@@ -963,14 +963,14 @@ class ClipSync:
                         if src is not None:
                             self._stream_file(w, src, e["n"])
                 w.close()
-            logging.info("Verstuurd naar %s: %s", addr[0], clip.describe())
-            self._event(f"Verstuurd naar {self.peer_name(addr[0])}: {clip.describe()}")
+            logging.info("Sent to %s: %s", addr[0], clip.describe())
+            self._event(f"Sent to {self.peer_name(addr[0])}: {clip.describe()}")
         except OSError as e:
-            logging.warning("Versturen naar %s mislukt: %s", addr[0], e)
+            logging.warning("Sending to %s failed: %s", addr[0], e)
 
     @staticmethod
     def _stream_file(w, path, size):
-        # Precies `size` bytes sturen, ook als het bestand intussen veranderd is.
+        # Send exactly `size` bytes, even if the file changed in the meantime.
         remaining = size
         try:
             with open(path, "rb") as f:
@@ -981,7 +981,7 @@ class ClipSync:
                     w.write(chunk)
                     remaining -= len(chunk)
         except OSError as e:
-            logging.warning("Kan %s niet lezen: %s", path, e)
+            logging.warning("Cannot read %s: %s", path, e)
         if remaining:
             w.write(b"\x00" * remaining)
 
@@ -991,16 +991,16 @@ class ClipSync:
             try:
                 manifest = build_manifest(clip.data)
             except OSError as e:
-                logging.warning("Bestanden lezen mislukt: %s", e)
+                logging.warning("Reading files failed: %s", e)
                 return
             if manifest[3] > self.max_files:
-                logging.warning("Bestanden te groot (%d MB > max_files_mb), niet verstuurd",
+                logging.warning("Files too large (%d MB > max_files_mb), not sent",
                                 manifest[3] // 2 ** 20)
                 return
         else:
             size = len(clip.data.encode("utf-8") if clip.kind == "text" else clip.data)
             if size > MAX_INLINE:
-                logging.warning("Klembord te groot (%d MB), niet verstuurd", size // 2 ** 20)
+                logging.warning("Clipboard too large (%d MB), not sent", size // 2 ** 20)
                 return
         for addr in self.active_peers():
             threading.Thread(target=self.send, args=(addr, clip, manifest), daemon=True).start()
@@ -1022,23 +1022,23 @@ class ClipSync:
             self.broadcast(clip)
 
     def start(self):
-        """Start alle achtergrondthreads. Faalt als clipsync al draait."""
+        """Start all background threads. Fails if clipsync is already running."""
         self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         if not IS_WINDOWS:
             self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             self.srv.bind(("", PORT))
         except OSError:
-            raise SystemExit(f"Poort {PORT} is bezet: draait clipsync al? Zo niet, kies dan "
-                             f"een andere poort met \"port\" in {CONFIG_FILE}.")
+            raise SystemExit(f"Port {PORT} is in use: is clipsync already running? If not, choose "
+                             f"another port with \"port\" in {CONFIG_FILE}.")
         self.srv.listen(5)
-        logging.info("clipsync gestart op %s (poort %d)", self.name, PORT)
+        logging.info("clipsync started on %s (port %d)", self.name, PORT)
         for target in (self.discovery_loop, self.server_loop, self.beacon_loop, self.poll_loop):
             threading.Thread(target=target, daemon=True).start()
 
 
 # --------------------------------------------------------------------------- #
-# Tray-icoon (optioneel, via pystray)
+# Tray icon (optional, via pystray)
 # --------------------------------------------------------------------------- #
 
 def tray_icon_image(connected):
@@ -1046,9 +1046,9 @@ def tray_icon_image(connected):
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     color = (46, 158, 91, 255) if connected else (140, 140, 140, 255)
-    d.rounded_rectangle((10, 8, 54, 60), radius=8, fill=color)                # klembord
-    d.rounded_rectangle((22, 2, 42, 16), radius=4, fill=(60, 60, 60, 255))    # klem
-    for y in (26, 36, 46):                                                    # "tekst"
+    d.rounded_rectangle((10, 8, 54, 60), radius=8, fill=color)                # clipboard
+    d.rounded_rectangle((22, 2, 42, 16), radius=4, fill=(60, 60, 60, 255))    # clip
+    for y in (26, 36, 46):                                                    # "text"
         d.rectangle((18, y, 46, y + 4), fill=(255, 255, 255, 255))
     return img
 
@@ -1062,37 +1062,37 @@ def open_log():
 
 
 def run_tray(app):
-    """Toont een tray-icoon. Geeft False terug als pystray niet beschikbaar is."""
+    """Shows a tray icon. Returns False if pystray is not available."""
     try:
         import pystray
         from PIL import Image  # noqa: F401
     except Exception as e:
-        logging.info("Geen tray-icoon (%s). Installeer pystray om er een te krijgen.", e)
+        logging.info("No tray icon (%s). Install pystray to get one.", e)
         return False
 
     def status_text(_item):
         names = app.peer_names()
-        return f"Verbonden met: {', '.join(names)}" if names else "Zoeken naar apparaten…"
+        return f"Connected to: {', '.join(names)}" if names else "Looking for devices…"
 
     def history_items():
         items = [pystray.MenuItem(c.label(), (lambda c: lambda _icon, _item: threading.Thread(
                      target=app.restore, args=(c,), daemon=True).start())(c))
                  for c in list(app.history) if c.available()]
-        return items or [pystray.MenuItem("Nog leeg", None, enabled=False)]
+        return items or [pystray.MenuItem("Empty", None, enabled=False)]
 
     def quit_app(icon, _item):
-        logging.info("clipsync afgesloten via tray-icoon")
+        logging.info("clipsync quit via tray icon")
         icon.stop()
 
     menu = pystray.Menu(
-        pystray.MenuItem(f"clipsync op {app.name}", None, enabled=False),
+        pystray.MenuItem(f"clipsync on {app.name}", None, enabled=False),
         pystray.MenuItem(status_text, None, enabled=False),
-        pystray.MenuItem(lambda _i: app.last_event or "Nog niets gedeeld", None, enabled=False),
+        pystray.MenuItem(lambda _i: app.last_event or "Nothing shared yet", None, enabled=False),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Recent gekopieerd", pystray.Menu(history_items)),
+        pystray.MenuItem("Recently copied", pystray.Menu(history_items)),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Logbestand openen", lambda *_: open_log()),
-        pystray.MenuItem("Afsluiten", quit_app),
+        pystray.MenuItem("Open log file", lambda *_: open_log()),
+        pystray.MenuItem("Quit", quit_app),
     )
     icon = pystray.Icon(APP, tray_icon_image(False), "clipsync", menu)
 
@@ -1104,20 +1104,20 @@ def run_tray(app):
             if (names, event, app.history_version) != state:
                 if state is None or bool(names) != bool(state[0]):
                     icon.icon = tray_icon_image(bool(names))
-                icon.title = "clipsync: " + (", ".join(names) if names else "geen apparaten")
+                icon.title = "clipsync: " + (", ".join(names) if names else "no devices")
                 icon.update_menu()
                 state = (names, event, app.history_version)
             time.sleep(2)
 
     ctrl_handler = None
     if IS_WINDOWS:
-        # De berichtenlus van pystray blokkeert de hoofdthread, waardoor
-        # Python Ctrl+C in de console nooit afhandelt. Daarom zelf opvangen.
+        # pystray's message loop blocks the main thread, so Python never
+        # handles Ctrl+C in the console. Catch it ourselves.
         import ctypes
 
         @ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_uint)
         def ctrl_handler(_event):
-            logging.info("clipsync afgesloten (Ctrl+C)")
+            logging.info("clipsync quit (Ctrl+C)")
             icon.stop()
             return 1
 
@@ -1150,7 +1150,7 @@ def install():
         pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
         if not os.path.exists(pythonw):
             pythonw = sys.executable
-        # .vbs zodat er geen consolevenster verschijnt
+        # .vbs so no console window appears
         content = (f'CreateObject("WScript.Shell").Run '
                    f'"""{pythonw}"" ""{script}""", 0, False\r\n')
     else:
@@ -1159,28 +1159,28 @@ def install():
                    "X-GNOME-Autostart-enabled=true\nNoDisplay=true\n")
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
-    print(f"Autostart geïnstalleerd: {path}")
-    print("Start nu handmatig of log opnieuw in.")
+    print(f"Autostart installed: {path}")
+    print("Start it manually now, or log out and back in.")
 
 
 def uninstall():
     path = autostart_path()
     if os.path.exists(path):
         os.remove(path)
-        print(f"Verwijderd: {path}")
+        print(f"Removed: {path}")
     else:
-        print("Autostart was niet geïnstalleerd.")
+        print("Autostart was not installed.")
 
 
 # --------------------------------------------------------------------------- #
 
 def main():
-    ap = argparse.ArgumentParser(description="Synchroniseer je klembord over het lokale netwerk.")
-    ap.add_argument("--setup", action="store_true", help="wachtwoord instellen")
-    ap.add_argument("--install", action="store_true", help="automatisch starten bij inloggen")
-    ap.add_argument("--uninstall", action="store_true", help="autostart verwijderen")
-    ap.add_argument("-v", "--verbose", action="store_true", help="meer logging")
-    ap.add_argument("--no-tray", action="store_true", help="geen tray-icoon tonen")
+    ap = argparse.ArgumentParser(description="Sync your clipboard over the local network.")
+    ap.add_argument("--setup", action="store_true", help="set the password")
+    ap.add_argument("--install", action="store_true", help="start automatically at login")
+    ap.add_argument("--uninstall", action="store_true", help="remove autostart")
+    ap.add_argument("-v", "--verbose", action="store_true", help="more logging")
+    ap.add_argument("--no-tray", action="store_true", help="don't show a tray icon")
     args = ap.parse_args()
 
     if args.install:
@@ -1193,7 +1193,7 @@ def main():
     cfg = load_config()
     if args.setup or not cfg or not cfg.get("password"):
         if not sys.stdin or not sys.stdin.isatty():
-            raise SystemExit("Nog geen wachtwoord ingesteld: draai eerst 'clipsync.py --setup'.")
+            raise SystemExit("No password set yet: run 'clipsync.py --setup' first.")
         cfg = setup()
         if args.setup:
             return
@@ -1202,7 +1202,7 @@ def main():
     if "CLIPSYNC_PORT" not in os.environ:
         PORT = int(cfg.get("port", DEFAULT_PORT))
     if not 1024 <= PORT <= 65535:
-        raise SystemExit(f"Ongeldige poort {PORT}: kies een getal tussen 1024 en 65535.")
+        raise SystemExit(f"Invalid port {PORT}: choose a number between 1024 and 65535.")
 
     handlers = [logging.handlers.RotatingFileHandler(
         LOG_FILE, maxBytes=1_000_000, backupCount=1, encoding="utf-8")]

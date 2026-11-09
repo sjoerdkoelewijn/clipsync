@@ -1,99 +1,99 @@
 # clipsync
 
-Deelt je klembord automatisch tussen je computers op hetzelfde lokale netwerk:
-**tekst, afbeeldingen en bestanden/mappen**.
-Eén Python-bestand, werkt op Windows en Linux. Extra packages zijn alleen nodig voor het (optionele) tray-icoon.
+Automatically shares your clipboard between your computers on the same local network:
+**text, images and files/folders**.
+A single Python file that works on Windows and Linux. Extra packages are only needed for the (optional) tray icon.
 
-> **Let op:** clipsync is een hobbyproject dat ik voor mijn eigen gebruik heb gemaakt. Je mag het gratis gebruiken en aanpassen, maar het is niet uitgebreid getest. Het is ook niet door een beveiligingsexpert gecontroleerd. Gebruik je het, dan doe je dat op eigen risico. Er kunnen fouten in zitten of dingen ontbreken, en ik kan niet garanderen dat het goed werkt of dat je gegevens veilig zijn. Zie ook [Beveiliging](#beveiliging) en de [licentie](LICENSE).
+> **Note:** clipsync is a hobby project I built for my own use. You're free to use and modify it, but it hasn't been extensively tested. It also hasn't been reviewed by a security expert. If you use it, you do so at your own risk. It may contain bugs or lack features, and I can't guarantee that it works correctly or that your data is safe. See also [Security](#security) and the [license](LICENSE).
 
-## Installatie
+## Installation
 
-**Linux** (Python 3 zit er al op):
+**Linux** (Python 3 is usually already installed):
 
 ```bash
 sudo apt install xclip python3-pystray gir1.2-ayatanaappindicator3-0.1
 python3 clipsync.py --install
 ```
 
-**Windows**: installeer Python 3 van python.org (vink "Add to PATH" aan), kopieer `clipsync.py` naar een vaste plek, en:
+**Windows**: install Python 3 from python.org (tick "Add to PATH"), put `clipsync.py` in a permanent location, and run:
 
 ```bat
 pip install pystray pillow
 python clipsync.py --install
 ```
 
-`pystray` (en op Linux de AppIndicator-bibliotheek) is alleen nodig voor het tray-icoon. Zonder die pakketten werkt clipsync gewoon, maar dan zonder icoon.
+`pystray` (and on Linux the AppIndicator library) is only needed for the tray icon. Without those packages clipsync still works, just without an icon.
 
-`--install` vraagt om een wachtwoord (gebruik op elk apparaat **hetzelfde**) en zorgt dat clipsync start zodra je inlogt. Start het daarna één keer handmatig of log opnieuw in.
+`--install` asks for a password (use the **same** one on every device) and makes clipsync start when you log in. After that, start it once manually or log out and back in.
 
-Windows vraagt bij de eerste start om netwerktoegang via de firewall: sta dit toe voor **privénetwerken**. Je netwerk moet in Windows als "Privé" ingesteld staan.
+On first start, Windows asks for network access through the firewall: allow it for **private networks**. Your network must be set to "Private" in Windows.
 
-## Gebruik
+## Usage
 
-Kopieer op het ene apparaat, plak op het andere:
+Copy on one device, paste on the other:
 
-- **Tekst**: zoals je gewend bent.
-- **Afbeeldingen**: screenshots, "Afbeelding kopiëren" in de browser, enz. Ze worden als PNG verstuurd.
-- **Bestanden en mappen**: kopieer ze in Verkenner/Bestanden (Ctrl+C) en plak ze op het andere apparaat in een map (Ctrl+V).
-  Ze worden direct bij het kopiëren al verstuurd en tijdelijk opgeslagen in
-  `~/.cache/clipsync/files` (Linux) of `%LOCALAPPDATA%\clipsync\files` (Windows). Daar worden ze na 24 uur opgeruimd.
-  Standaard is het maximum 500 MB per keer. Dat pas je aan met `max_files_mb` in `config.json`.
+- **Text**: as you're used to.
+- **Images**: screenshots, "Copy image" in your browser, etc. They are sent as PNG.
+- **Files and folders**: copy them in Explorer/Files (Ctrl+C) and paste them into a folder on the other device (Ctrl+V).
+  They are sent as soon as you copy them and stored temporarily in
+  `~/.cache/clipsync/files` (Linux) or `%LOCALAPPDATA%\clipsync\files` (Windows), where they are cleaned up after 24 hours.
+  By default the maximum is 500 MB per copy. You can change this with `max_files_mb` in `config.json`.
 
-### Tray-icoon
+### Tray icon
 
-Het klembord-icoon in de systeembalk laat zien dat clipsync draait:
-**groen** als er een ander apparaat is gevonden, **grijs** als het nog zoekt.
-Het menu toont met welke apparaten je verbonden bent en wat er als laatste is gedeeld.
-Ook kun je er het logbestand openen of clipsync afsluiten.
+The clipboard icon in the system tray shows that clipsync is running:
+**green** when another device has been found, **grey** while it's still searching.
+The menu shows which devices you're connected to and what was shared last.
+You can also open the log file or quit clipsync from it.
 
-Onder **Recent gekopieerd** staan de laatste 5 dingen die op je klembord stonden: tekst, afbeeldingen en bestanden, ook die van je andere apparaten.
-Klik je op een item, dan staat het weer op je klembord en wordt het ook naar je andere apparaten gestuurd.
-De geschiedenis staat alleen in het geheugen. Na een herstart begint hij dus leeg, en er komt niets op schijf te staan.
+**Recently copied** lists the last 5 things that were on your clipboard: text, images and files, including those from your other devices.
+Click an item to put it back on your clipboard; it's also sent to your other devices.
+The history is kept in memory only, so it starts empty after a restart and nothing is written to disk.
 
-| Commando | Wat |
+| Command | What it does |
 |---|---|
-| `clipsync.py` | Draaien in de voorgrond (met log in de terminal) |
-| `clipsync.py --setup` | Wachtwoord wijzigen |
-| `clipsync.py --install` / `--uninstall` | Autostart aan/uit |
+| `clipsync.py` | Run in the foreground (with the log in the terminal) |
+| `clipsync.py --setup` | Change the password |
+| `clipsync.py --install` / `--uninstall` | Turn autostart on/off |
 | `clipsync.py -v` | Extra logging |
-| `clipsync.py --no-tray` | Zonder tray-icoon draaien |
+| `clipsync.py --no-tray` | Run without a tray icon |
 
-Log en config staan in `~/.config/clipsync/` (Linux) of `%APPDATA%\clipsync\` (Windows).
+The log and config live in `~/.config/clipsync/` (Linux) or `%APPDATA%\clipsync\` (Windows).
 
-### Instellingen (`config.json`)
+### Settings (`config.json`)
 
-| Instelling | Standaard | Wat |
+| Setting | Default | What it does |
 |---|---|---|
-| `password` | – | Gedeeld wachtwoord, wordt ingesteld met `--setup` |
-| `port` | `45873` | Poort voor TCP en UDP (1024–65535). Moet op alle apparaten gelijk zijn |
-| `peers` | `[]` | Vaste adressen als broadcast niet werkt, bv. `["192.168.1.30"]` of `["192.168.1.30:45900"]` |
-| `max_files_mb` | `500` | Maximale totale grootte van bestanden per keer kopiëren |
+| `password` | – | Shared password, set with `--setup` |
+| `port` | `45873` | Port for TCP and UDP (1024–65535). Must be the same on all devices |
+| `peers` | `[]` | Fixed addresses if broadcast doesn't work, e.g. `["192.168.1.30"]` or `["192.168.1.30:45900"]` |
+| `max_files_mb` | `500` | Maximum total size of files per copy |
 
-Na het wijzigen van `config.json` moet je clipsync opnieuw starten.
+Restart clipsync after changing `config.json`.
 
-## Hoe het werkt
+## How it works
 
-- Elk apparaat roept elke 3 s via UDP-broadcast "ik ben er" (standaard op poort **45873**).
-- Verandert je klembord, dan wordt de inhoud via TCP (zelfde poort) in versleutelde blokken van 1 MB naar alle gevonden apparaten gestuurd.
-- Alles is versleuteld en geauthenticeerd met een sleutel die van je wachtwoord is afgeleid. Berichten met een ander wachtwoord of ouder dan 2 minuten worden genegeerd, dus de klokken moeten ongeveer gelijk lopen.
-- Bevat het klembord meerdere soorten inhoud, dan gaat voorrang naar bestanden, dan tekst, dan afbeelding. Kopieer je bijvoorbeeld cellen in Excel, dan komt de tekst door.
+- Every 3 seconds, each device announces "I'm here" via UDP broadcast (on port **45873** by default).
+- When your clipboard changes, the content is sent over TCP (same port) in encrypted 1 MB blocks to all devices that were found.
+- Everything is encrypted and authenticated with a key derived from your password. Messages with a different password or older than 2 minutes are ignored, so the devices' clocks need to be roughly in sync.
+- If the clipboard holds several kinds of content, files take priority, then text, then images. If you copy cells in Excel, for example, the text comes through.
 
-## Beveiliging
+## Security
 
-- clipsync is bedoeld voor een **vertrouwd thuisnetwerk**. Zet de poort niet open naar internet.
-- Alles wat clipsync over het netwerk stuurt is versleuteld. De sleutel wordt met `scrypt` uit het wachtwoord afgeleid. Daarna versleutelt een stroomcijfer op basis van `SHAKE256` (SHA-3) de data, en controleert `HMAC-SHA256` of er niet mee geknoeid is.
-  De onderdelen zijn standaard en komen uit de Python-standaardbibliotheek. De combinatie heb ik zelf samengesteld en die is **niet onafhankelijk gecontroleerd**.
-- Bekende beperkingen:
-  - Er is geen *forward secrecy*: wie verkeer opneemt en later het wachtwoord achterhaalt, kan dat oude verkeer alsnog lezen.
-  - Iemand op hetzelfde netwerk kan een opgevangen bericht binnen 2 minuten opnieuw afspelen.
-  - Het wachtwoord staat leesbaar in `config.json`. Alleen jouw gebruikersaccount kan dat bestand lezen.
-- De beveiliging staat of valt met je wachtwoord. Kies een lang wachtwoord dat je nergens anders gebruikt.
-- Ontvangen bestanden staan onversleuteld in de cachemap, tot ze na 24 uur worden opgeruimd.
+- clipsync is meant for a **trusted home network**. Don't expose the port to the internet.
+- Everything clipsync sends over the network is encrypted. The key is derived from the password with `scrypt`. A stream cipher based on `SHAKE256` (SHA-3) then encrypts the data, and `HMAC-SHA256` checks that it hasn't been tampered with.
+  The building blocks are standard and come from the Python standard library. I put the combination together myself, and it has **not been independently reviewed**.
+- Known limitations:
+  - There is no *forward secrecy*: anyone who records traffic and later learns the password can still read that old traffic.
+  - Someone on the same network can replay a captured message within 2 minutes.
+  - The password is stored readably in `config.json`. Only your user account can read that file.
+- Security depends on your password. Choose a long password you don't use anywhere else.
+- Received files are stored unencrypted in the cache folder until they are cleaned up after 24 hours.
 
-## Problemen
+## Troubleshooting
 
-- **"Poort is bezet"**: draait clipsync al (kijk in de systeembalk)? Zo niet, dan gebruikt een ander programma die poort. Kies dan een andere poort met `port` in `config.json`, op alle apparaten.
-- **Apparaten vinden elkaar niet**: controleer of alle apparaten hetzelfde wachtwoord en dezelfde poort gebruiken. Controleer ook de firewall (poort 45873 TCP+UDP, of je eigen poort). Op Ubuntu met ufw: `sudo ufw allow from 192.168.1.0/24 to any port 45873`.
-  Werkt broadcast niet op je netwerk, zet dan de IP-adressen van de andere apparaten in `config.json`: `"peers": ["192.168.1.30"]`.
-- **Linux op Wayland**: xclip werkt via XWayland (GNOME/KDE). Heb je geen XWayland, installeer dan `wl-clipboard`.
-- **Bestanden plakken lukt niet in je bestandsbeheerder**: onder GNOME, Cinnamon, MATE en XFCE gebruikt clipsync het GNOME-formaat, elders `text/uri-list`. Laat het weten als jouw bestandsbeheerder iets anders verwacht.
+- **"Port is in use"**: is clipsync already running (check the system tray)? If not, another program is using that port. Choose another port with `port` in `config.json`, on all devices.
+- **Devices can't find each other**: check that all devices use the same password and the same port. Also check the firewall (port 45873 TCP+UDP, or your own port). On Ubuntu with ufw: `sudo ufw allow from 192.168.1.0/24 to any port 45873`.
+  If broadcast doesn't work on your network, put the IP addresses of the other devices in `config.json`: `"peers": ["192.168.1.30"]`.
+- **Linux on Wayland**: xclip works via XWayland (GNOME/KDE). If you don't have XWayland, install `wl-clipboard`.
+- **Pasting files doesn't work in your file manager**: on GNOME, Cinnamon, MATE and XFCE clipsync uses the GNOME format, elsewhere `text/uri-list`. Please open an issue if your file manager expects something else.
