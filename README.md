@@ -7,7 +7,7 @@ A single Python file that works on Windows and Linux. Extra packages are only ne
 ## Disclaimer
 
 > [!WARNING]
-> clipsync is a hobby project I built for my own use. You're free to use and modify it, but it hasn't been extensively tested. It also hasn't been reviewed by a security expert. If you use it, you do so at your own risk. It may contain bugs or lack features, and I can't guarantee that it works correctly or that your data is safe. See also [Security](#security) and the [license](LICENSE).
+> clipsync is a project I built for my own use. You're free to use and modify it, but it hasn't been extensively tested. If you use it, you do so at your own risk. It may contain bugs or lack features, and I don't guarantee that it works correctly or that your data is safe. See also [Security](#security) and the [license](LICENSE).
 
 ## Installation
 
