@@ -4,7 +4,10 @@ Automatically shares your clipboard between your computers on the same local net
 **text, images and files/folders**.
 A single Python file that works on Windows and Linux. Extra packages are only needed for the (optional) tray icon.
 
-> **Note:** clipsync is a hobby project I built for my own use. You're free to use and modify it, but it hasn't been extensively tested. It also hasn't been reviewed by a security expert. If you use it, you do so at your own risk. It may contain bugs or lack features, and I can't guarantee that it works correctly or that your data is safe. See also [Security](#security) and the [license](LICENSE).
+## Disclaimer
+
+> [!WARNING]
+> clipsync is a hobby project I built for my own use. You're free to use and modify it, but it hasn't been extensively tested. It also hasn't been reviewed by a security expert. If you use it, you do so at your own risk. It may contain bugs or lack features, and I can't guarantee that it works correctly or that your data is safe. See also [Security](#security) and the [license](LICENSE).
 
 ## Installation
 
