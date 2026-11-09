@@ -37,7 +37,8 @@ import urllib.parse
 import uuid
 import zlib
 
-PORT = int(os.environ.get("CLIPSYNC_PORT", 45873))  # UDP (ontdekken) en TCP (klembord)
+DEFAULT_PORT = 45873           # standaardpoort; aan te passen met "port" in config.json
+PORT = int(os.environ.get("CLIPSYNC_PORT", DEFAULT_PORT))  # UDP (ontdekken) en TCP (klembord)
 BEACON_INTERVAL = 3            # seconden tussen "ik ben er"-berichten
 PEER_TIMEOUT = 15              # peer vergeten als hij zo lang niets heeft laten horen
 POLL_INTERVAL = 0.5            # hoe vaak het lokale klembord gecontroleerd wordt
@@ -111,6 +112,7 @@ def setup():
     cfg["password"] = pw
     cfg.setdefault("peers", [])  # optioneel: vaste IP-adressen als broadcast niet werkt
     cfg.setdefault("max_files_mb", DEFAULT_MAX_FILES_MB)
+    cfg.setdefault("port", DEFAULT_PORT)  # moet op alle apparaten gelijk zijn
     save_config(cfg)
     print(f"Opgeslagen in {CONFIG_FILE}")
     return cfg
@@ -1027,7 +1029,8 @@ class ClipSync:
         try:
             self.srv.bind(("", PORT))
         except OSError:
-            raise SystemExit(f"Poort {PORT} is bezet: draait clipsync al?")
+            raise SystemExit(f"Poort {PORT} is bezet: draait clipsync al? Zo niet, kies dan "
+                             f"een andere poort met \"port\" in {CONFIG_FILE}.")
         self.srv.listen(5)
         logging.info("clipsync gestart op %s (poort %d)", self.name, PORT)
         for target in (self.discovery_loop, self.server_loop, self.beacon_loop, self.poll_loop):
@@ -1194,6 +1197,12 @@ def main():
         cfg = setup()
         if args.setup:
             return
+
+    global PORT
+    if "CLIPSYNC_PORT" not in os.environ:
+        PORT = int(cfg.get("port", DEFAULT_PORT))
+    if not 1024 <= PORT <= 65535:
+        raise SystemExit(f"Ongeldige poort {PORT}: kies een getal tussen 1024 en 65535.")
 
     handlers = [logging.handlers.RotatingFileHandler(
         LOG_FILE, maxBytes=1_000_000, backupCount=1, encoding="utf-8")]

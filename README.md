@@ -4,6 +4,8 @@ Deelt je klembord automatisch tussen je computers op hetzelfde lokale netwerk:
 **tekst, afbeeldingen en bestanden/mappen**.
 Eén Python-bestand, werkt op Windows en Linux. Extra packages zijn alleen nodig voor het (optionele) tray-icoon.
 
+> **Let op:** clipsync is een hobbyproject dat ik voor mijn eigen gebruik heb gemaakt. Je mag het gratis gebruiken en aanpassen, maar het is niet uitgebreid getest. Het is ook niet door een beveiligingsexpert gecontroleerd. Gebruik je het, dan doe je dat op eigen risico. Er kunnen fouten in zitten of dingen ontbreken, en ik kan niet garanderen dat het goed werkt of dat je gegevens veilig zijn. Zie ook [Beveiliging](#beveiliging) en de [licentie](LICENSE).
+
 ## Installatie
 
 **Linux** (Python 3 zit er al op):
@@ -58,16 +60,40 @@ De geschiedenis staat alleen in het geheugen. Na een herstart begint hij dus lee
 
 Log en config staan in `~/.config/clipsync/` (Linux) of `%APPDATA%\clipsync\` (Windows).
 
+### Instellingen (`config.json`)
+
+| Instelling | Standaard | Wat |
+|---|---|---|
+| `password` | – | Gedeeld wachtwoord, wordt ingesteld met `--setup` |
+| `port` | `45873` | Poort voor TCP en UDP (1024–65535). Moet op alle apparaten gelijk zijn |
+| `peers` | `[]` | Vaste adressen als broadcast niet werkt, bv. `["192.168.1.30"]` of `["192.168.1.30:45900"]` |
+| `max_files_mb` | `500` | Maximale totale grootte van bestanden per keer kopiëren |
+
+Na het wijzigen van `config.json` moet je clipsync opnieuw starten.
+
 ## Hoe het werkt
 
-- Elk apparaat roept elke 3 s via UDP-broadcast "ik ben er" op poort **45873**.
+- Elk apparaat roept elke 3 s via UDP-broadcast "ik ben er" (standaard op poort **45873**).
 - Verandert je klembord, dan wordt de inhoud via TCP (zelfde poort) in versleutelde blokken van 1 MB naar alle gevonden apparaten gestuurd.
 - Alles is versleuteld en geauthenticeerd met een sleutel die van je wachtwoord is afgeleid. Berichten met een ander wachtwoord of ouder dan 2 minuten worden genegeerd, dus de klokken moeten ongeveer gelijk lopen.
 - Bevat het klembord meerdere soorten inhoud, dan gaat voorrang naar bestanden, dan tekst, dan afbeelding. Kopieer je bijvoorbeeld cellen in Excel, dan komt de tekst door.
 
+## Beveiliging
+
+- clipsync is bedoeld voor een **vertrouwd thuisnetwerk**. Zet de poort niet open naar internet.
+- Alles wat clipsync over het netwerk stuurt is versleuteld. De sleutel wordt met `scrypt` uit het wachtwoord afgeleid. Daarna versleutelt een stroomcijfer op basis van `SHAKE256` (SHA-3) de data, en controleert `HMAC-SHA256` of er niet mee geknoeid is.
+  De onderdelen zijn standaard en komen uit de Python-standaardbibliotheek. De combinatie heb ik zelf samengesteld en die is **niet onafhankelijk gecontroleerd**.
+- Bekende beperkingen:
+  - Er is geen *forward secrecy*: wie verkeer opneemt en later het wachtwoord achterhaalt, kan dat oude verkeer alsnog lezen.
+  - Iemand op hetzelfde netwerk kan een opgevangen bericht binnen 2 minuten opnieuw afspelen.
+  - Het wachtwoord staat leesbaar in `config.json`. Alleen jouw gebruikersaccount kan dat bestand lezen.
+- De beveiliging staat of valt met je wachtwoord. Kies een lang wachtwoord dat je nergens anders gebruikt.
+- Ontvangen bestanden staan onversleuteld in de cachemap, tot ze na 24 uur worden opgeruimd.
+
 ## Problemen
 
-- **Apparaten vinden elkaar niet**: controleer de firewall (poort 45873 TCP+UDP). Op Ubuntu met ufw: `sudo ufw allow from 192.168.1.0/24 to any port 45873`.
+- **"Poort is bezet"**: draait clipsync al (kijk in de systeembalk)? Zo niet, dan gebruikt een ander programma die poort. Kies dan een andere poort met `port` in `config.json`, op alle apparaten.
+- **Apparaten vinden elkaar niet**: controleer of alle apparaten hetzelfde wachtwoord en dezelfde poort gebruiken. Controleer ook de firewall (poort 45873 TCP+UDP, of je eigen poort). Op Ubuntu met ufw: `sudo ufw allow from 192.168.1.0/24 to any port 45873`.
   Werkt broadcast niet op je netwerk, zet dan de IP-adressen van de andere apparaten in `config.json`: `"peers": ["192.168.1.30"]`.
 - **Linux op Wayland**: xclip werkt via XWayland (GNOME/KDE). Heb je geen XWayland, installeer dan `wl-clipboard`.
 - **Bestanden plakken lukt niet in je bestandsbeheerder**: onder GNOME, Cinnamon, MATE en XFCE gebruikt clipsync het GNOME-formaat, elders `text/uri-list`. Laat het weten als jouw bestandsbeheerder iets anders verwacht.
